@@ -1,0 +1,424 @@
+[
+    {
+        "id": "tab-main",
+        "type": "tab",
+        "label": "Grama Inteligente",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "n-inject",
+        "type": "inject",
+        "z": "tab-main",
+        "name": "Buscar clima 10min",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "600",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 170,
+        "y": 480,
+        "wires": [
+            [
+                "n-http"
+            ]
+        ]
+    },
+    {
+        "id": "n-http",
+        "type": "http request",
+        "z": "tab-main",
+        "name": "Open-Meteo SP",
+        "method": "GET",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://api.openweathermap.org/data/2.5/weather?q=Sao+Paulo,BR&appid=0d095d8cbe0a0db6c4ad6bf59b0f6d01&units=metric&lang=pt_br",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 380,
+        "y": 480,
+        "wires": [
+            [
+                "n-clima"
+            ]
+        ]
+    },
+    {
+        "id": "n-clima",
+        "type": "function",
+        "z": "tab-main",
+        "name": "Trata clima",
+        "func": "let d = msg.payload;\nif (!d || !d.main) {\n    node.warn('API erro: ' + JSON.stringify(d));\n    return null;\n}\nlet clima = {\n    temp: d.main.temp,\n    umAr: d.main.humidity,\n    chuva: d.rain ? (d.rain['1h'] || 0) : 0,\n    nuvens: d.clouds.all,\n    vento: d.wind.speed,\n    cond: d.weather[0].description\n};\nglobal.set('clima', clima);\nlet solo = global.get('solo');\nmsg.payload = { clima: clima, solo: solo !== undefined ? solo : null };\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 580,
+        "y": 480,
+        "wires": [
+            [
+                "n-decisao"
+            ]
+        ]
+    },
+    {
+        "id": "n-json",
+        "type": "json",
+        "z": "tab-main",
+        "name": "JSON",
+        "property": "payload",
+        "action": "obj",
+        "x": 330,
+        "y": 160,
+        "wires": [
+            [
+                "n-split"
+            ]
+        ]
+    },
+    {
+        "id": "n-split",
+        "type": "function",
+        "z": "tab-main",
+        "name": "Split sensores",
+        "func": "if (msg.payload.sensor === 'umidade') {\n    let v = msg.payload.valor;\n    global.set('solo', v);\n    return [{ payload: v }, null, { payload: {} }];\n\n} else if (msg.payload.sensor === 'ultrassom') {\n    let v = msg.payload.valor;\n    global.set('distancia', v);\n    return [null, { payload: v }, { payload: {} }];\n}\nreturn [null, null, null];",
+        "outputs": 3,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 160,
+        "wires": [
+            [
+                "n-gauge-umidade",
+                "n-chart-umidade"
+            ],
+            [
+                "n-gauge-ultra",
+                "n-chart-ultra"
+            ],
+            [
+                "n-decisao"
+            ]
+        ]
+    },
+    {
+        "id": "n-decisao",
+        "type": "function",
+        "z": "tab-main",
+        "name": "Decisao",
+        "func": "let solo = global.get('solo');\nlet distancia = global.get('distancia');\nlet clima = global.get('clima');\n\n// Garante que são números ou null\nsolo = (solo !== undefined && solo !== null && !isNaN(solo)) ? Number(solo) : null;\ndistancia = (distancia !== undefined && distancia !== null && !isNaN(distancia)) ? Number(distancia) : null;\n\nlet alertas = [];\n\nif (distancia !== null && distancia < 399) {\n    alertas.push({\n        acao: '✂️ HORA DE CORTAR',\n        motivo: 'Grama alta! Distancia: ' + distancia.toFixed(1) + 'cm',\n        cor: '#E65100',\n        tipo_alerta: 'RUIM',\n        id_sensor: 2\n    });\n}\n\nif (solo !== null && solo < 30) {\n    alertas.push({\n        acao: '🚿 REGAR AGORA',\n        motivo: 'Solo seco! Umidade: ' + solo.toFixed(1) + '%',\n        cor: '#B71C1C',\n        tipo_alerta: 'RUIM',\n        id_sensor: 1\n    });\n}\n\nif (alertas.length === 0) {\n    alertas.push({\n        acao: '✅ GRAMADO OK',\n        motivo: 'Tudo em ordem. Umidade: ' + (solo !== null ? solo.toFixed(1) + '%' : '---') +\n            ' | Distancia: ' + (distancia !== null ? distancia.toFixed(1) + 'cm' : '---'),\n        cor: '#2E7D32',\n        tipo_alerta: 'OK',\n        id_sensor: 1\n    });\n}\n\nmsg.payload = {\n    alertas,\n    solo: solo !== null ? solo.toFixed(1) + '%' : '---',\n    distancia: distancia !== null ? distancia.toFixed(1) + 'cm' : '---',\n    clima: clima ? {\n        temp: clima.temp,\n        umAr: clima.umAr,\n        chuva: clima.chuva,\n        vento: clima.vento,\n        cond: clima.cond\n    } : null\n};\n\nflow.set('alertasParaSalvar', alertas);\n\nmsg.query = \"INSERT INTO alertas (id_sensor, tipo_alerta, descricao) VALUES (\" + \n            alertas[0].id_sensor + \", '\" + \n            alertas[0].tipo_alerta + \"', '\" + \n            alertas[0].motivo.replace(/'/g, \"''\") + \"')\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 740,
+        "y": 340,
+        "wires": [
+            [
+                "n-template",
+                "0e819347ef5603a7"
+            ]
+        ]
+    },
+    {
+        "id": "n-template",
+        "type": "ui_template",
+        "z": "tab-main",
+        "group": "ui-grp-painel",
+        "name": "Painel Principal",
+        "order": 1,
+        "width": 12,
+        "height": 8,
+        "format": "<div style=\"font-family:sans-serif;padding:8px\">\n\n  <!-- ALERTAS -->\n  <div ng-repeat=\"a in msg.payload.alertas\" style=\"text-align:center;background:#f5f5f5;border-radius:12px;\n              padding:20px;margin-bottom:10px\">\n    <div style=\"font-size:30px;font-weight:bold;color:{{a.cor}}\">{{a.acao}}</div>\n    <div style=\"font-size:14px;color:#555;margin-top:8px\">{{a.motivo}}</div>\n  </div>\n\n  <!-- SENSORES -->\n  <div style=\"display:flex;gap:10px;margin-bottom:10px\">\n    <div style=\"flex:1;background:#E8F5E9;border-radius:12px;padding:16px;text-align:center\">\n      <div style=\"font-weight:bold;color:#2E7D32;font-size:13px\">UMIDADE DO SOLO</div>\n      <div style=\"font-size:30px;font-weight:bold;color:#2E7D32;margin-top:4px\">{{msg.payload.solo}}</div>\n      <div style=\"font-size:12px;color:#888;margin-top:4px\">regar se abaixo de 30%</div>\n    </div>\n    <div style=\"flex:1;background:#FFF3E0;border-radius:12px;padding:16px;text-align:center\">\n      <div style=\"font-weight:bold;color:#E65100;font-size:13px\">DISTANCIA (GRAMA)</div>\n      <div style=\"font-size:30px;font-weight:bold;color:#E65100;margin-top:4px\">{{msg.payload.distancia}}</div>\n      <div style=\"font-size:12px;color:#888;margin-top:4px\">cortar se abaixo de 399cm</div>\n    </div>\n  </div>\n\n  <!-- CLIMA -->\n  <div ng-if=\"msg.payload.clima\" style=\"background:#E3F2FD;border-radius:12px;padding:14px\">\n    <div style=\"font-weight:bold;color:#1565C0;margin-bottom:8px\">CLIMA - SAO PAULO</div>\n    <div style=\"display:flex;flex-wrap:wrap;gap:16px;font-size:15px\">\n      <span>🌡 <b>{{msg.payload.clima.temp}}°C</b></span>\n      <span>💧 Ar: <b>{{msg.payload.clima.umAr}}%</b></span>\n      <span>🌧 Chuva: <b>{{msg.payload.clima.chuva}}mm</b></span>\n      <span>💨 Vento: <b>{{msg.payload.clima.vento}}km/h</b></span>\n      <span>📍 <b>{{msg.payload.clima.cond}}</b></span>\n    </div>\n  </div>\n\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 960,
+        "y": 320,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "n-gauge-umidade",
+        "type": "ui_gauge",
+        "z": "tab-main",
+        "name": "Umidade",
+        "group": "ui-grp-gauges",
+        "order": 1,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Umidade do Solo",
+        "label": "%",
+        "format": "{{value | number:1}}",
+        "min": 0,
+        "max": 100,
+        "colors": [
+            "#B71C1C",
+            "#2E7D32",
+            "#1565C0"
+        ],
+        "seg1": "30",
+        "seg2": "80",
+        "x": 800,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "n-gauge-ultra",
+        "type": "ui_gauge",
+        "z": "tab-main",
+        "name": "Distancia",
+        "group": "ui-grp-gauges",
+        "order": 2,
+        "width": 6,
+        "height": 4,
+        "gtype": "gage",
+        "title": "Distancia (cm)",
+        "label": "cm",
+        "format": "{{value | number:1}}",
+        "min": 0,
+        "max": 400,
+        "colors": [
+            "#2E7D32",
+            "#F57F17",
+            "#B71C1C"
+        ],
+        "seg1": "10",
+        "seg2": "30",
+        "x": 820,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "n-chart-umidade",
+        "type": "ui_chart",
+        "z": "tab-main",
+        "name": "Graf Umidade",
+        "group": "ui-grp-historico",
+        "order": 1,
+        "width": 6,
+        "height": 4,
+        "label": "Umidade (%)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "Aguardando...",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "100",
+        "removeOlder": 1,
+        "removeOlderPoints": "100",
+        "removeOlderUnit": "3600",
+        "colors": [
+            "#1f77b4"
+        ],
+        "outputs": 1,
+        "x": 800,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "n-chart-ultra",
+        "type": "ui_chart",
+        "z": "tab-main",
+        "name": "Graf Distancia",
+        "group": "ui-grp-historico",
+        "order": 2,
+        "width": 6,
+        "height": 4,
+        "label": "Distancia (cm)",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "Aguardando...",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "400",
+        "removeOlder": 1,
+        "removeOlderPoints": "100",
+        "removeOlderUnit": "3600",
+        "colors": [
+            "#ff7f0e"
+        ],
+        "outputs": 1,
+        "x": 820,
+        "y": 260,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b1c266cd60d10968",
+        "type": "mqtt in",
+        "z": "tab-main",
+        "name": "HiveMQ",
+        "topic": "grama/sensor/#",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "d42f4ee19786d8ea",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 120,
+        "y": 160,
+        "wires": [
+            [
+                "n-json"
+            ]
+        ]
+    },
+    {
+        "id": "0e819347ef5603a7",
+        "type": "oracledb",
+        "z": "tab-main",
+        "name": "",
+        "usequery": false,
+        "query": "",
+        "usemappings": false,
+        "mappings": "[\n\t\"location.of.first.array.index.field.in.msg.payload\",\n\t\"location.of.second.array.index.field\",\n\t\"last_array_indexfield.in[3]\"\n]",
+        "server": "5a0b7e1c05cb6d42",
+        "resultaction": "multi",
+        "resultlimit": 100,
+        "x": 960,
+        "y": 520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "ui-grp-painel",
+        "type": "ui_group",
+        "name": "Painel",
+        "tab": "ui-tab",
+        "order": 1,
+        "disp": false,
+        "width": 12,
+        "collapse": false
+    },
+    {
+        "id": "ui-grp-gauges",
+        "type": "ui_group",
+        "name": "Sensores",
+        "tab": "ui-tab",
+        "order": 2,
+        "disp": false,
+        "width": 12,
+        "collapse": false
+    },
+    {
+        "id": "ui-grp-historico",
+        "type": "ui_group",
+        "name": "Historico",
+        "tab": "ui-tab",
+        "order": 3,
+        "disp": false,
+        "width": 12,
+        "collapse": false
+    },
+    {
+        "id": "d42f4ee19786d8ea",
+        "type": "mqtt-broker",
+        "name": "mqtt",
+        "broker": "3c63db4cbaf348a08ce33fae7f1aea6f.s1.eu.hivemq.cloud",
+        "port": "8883",
+        "tls": "74fa2574e447a411",
+        "clientid": "nodered-001",
+        "autoConnect": true,
+        "usetls": true,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "5a0b7e1c05cb6d42",
+        "type": "oracle-server",
+        "connectionname": "FIAP",
+        "tnsname": "",
+        "connectiontype": "Classic",
+        "instantclientpath": "",
+        "host": "oracle.fiap.com.br",
+        "port": 1521,
+        "db": "ORCL",
+        "poolmin": "",
+        "poolmax": 4,
+        "pooltimeout": 60
+    },
+    {
+        "id": "ui-tab",
+        "type": "ui_tab",
+        "name": "Grama Inteligente",
+        "icon": "grass",
+        "order": 1,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "74fa2574e447a411",
+        "type": "tls-config",
+        "name": "",
+        "cert": "",
+        "key": "",
+        "ca": "",
+        "certname": "",
+        "keyname": "",
+        "caname": "",
+        "servername": "",
+        "verifyservercert": false,
+        "alpnprotocol": ""
+    },
+    {
+        "id": "18c5ed17b1d5c071",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.6",
+            "node-red-contrib-oracledb-mod": "0.7.6"
+        }
+    }
+]
