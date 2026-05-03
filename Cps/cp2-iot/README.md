@@ -161,6 +161,9 @@ Acesse `http://localhost:1880/ui`
 ##Link Repositório GitHub
 https://github.com/Waidemannm/IOT/tree/main/Cps/cp2-iot
 
+##Link Vídeo 
+https://youtu.be/Mk3W0PQmYoE
+
 ## 👨‍💻 Autor
 
 Desenvolvido como projeto acadêmico — FIAP 2026
